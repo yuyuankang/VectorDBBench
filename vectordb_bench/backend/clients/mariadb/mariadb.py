@@ -131,7 +131,7 @@ class MariaDB(VectorDB):
     def ready_to_load(self) -> bool:
         pass
 
-    def optimize(self) -> None:
+    def optimize(self, data_size: int | None = None) -> None:
         assert self.conn is not None, "Connection is not initialized"
         assert self.cursor is not None, "Cursor is not initialized"
 
@@ -198,11 +198,26 @@ class MariaDB(VectorDB):
         assert self.conn is not None, "Connection is not initialized"
         assert self.cursor is not None, "Cursor is not initialized"
 
-        search_param = self.case_config.search_param()  # noqa: F841
+        search_param = self.case_config.search_param()
+        metric = search_param["metric_type"]
+        hex_vector = self.vector_to_hex(query).hex()
 
         if filters:
-            self.cursor.execute(self.select_sql_with_filter, (filters.get("id"), self.vector_to_hex(query), k))
+            id_threshold = filters.get("id", 0)
+            sql = (
+                f"SELECT id FROM {self.db_name}.{self.table_name} "
+                f"WHERE id >= {id_threshold} "
+                f"ORDER BY vec_distance_{metric}(v, UNHEX('{hex_vector}')) "
+                f"LIMIT {k}"
+            )
         else:
-            self.cursor.execute(self.select_sql, (self.vector_to_hex(query), k))
+            sql = (
+                f"SELECT id FROM {self.db_name}.{self.table_name} "
+                f"ORDER BY vec_distance_{metric}(v, UNHEX('{hex_vector}')) "
+                f"LIMIT {k}"
+            )
+
+        log.debug(f"Executing search SQL: {sql}")
+        self.cursor.execute(sql)
 
         return [id for (id,) in self.cursor.fetchall()]  # noqa: A001
